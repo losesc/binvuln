@@ -1,6 +1,6 @@
 # Limitations of Automated Binary Vulnerability Analysis
 
-Milestone pipeline: reproduce Khare et al.'s source-level LLM vulnerability
+Milestone pipeline: reproduce Khare et al.'s source level LLM vulnerability
 detection on Juliet C/C++, then measure how far it degrades on decompiled
 binaries, isolating compiler optimization from symbol stripping.
 
