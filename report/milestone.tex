@@ -1,0 +1,219 @@
+\documentclass[10pt]{article}
+\usepackage{neuripslike}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{url}
+\usepackage[hidelinks]{hyperref}
+\usepackage{enumitem}
+\setlist{nosep,leftmargin=1.2em}
+
+\newcommand{\placeholder}[1]{{\color{red}\textbf{[#1]}}}
+
+\title{Limitations of Automated Binary Vulnerability Analysis\\in Optimized and Stripped Binaries}
+\author{Los Escalante \\ \texttt{cescalante.dc@gmail.com} \\ Milestone Report}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{Revised scope and thesis}
+The proposal asked whether automated static analysis and LLM-based vulnerability
+detectors stay reliable once binaries are compiled with aggressive optimization
+and stripped of symbols. Three changes were made after instructor feedback and a
+closer read of the literature.
+
+First, the baseline changed. The proposal named \texttt{cppcheck}, but
+\texttt{cppcheck} analyzes C source and never inspects a compiled binary, so it
+cannot measure any effect of optimization or stripping. It is kept only as a
+source-level reference point; the binary-level static baseline is now
+\texttt{cwe\_checker}, which operates on the lifted binary and covers the three
+target weakness classes. Second, the targets are reproduction-grade:
+each program has a vulnerable and a fixed (patched) version, so false positives
+and hallucination can be measured, not only missed bugs. Third, optimization and
+symbol stripping are now varied \emph{independently} in a $2\times2$ design, as
+the feedback requested, rather than bundled into a single \texttt{-O3 -s} build.
+
+\textbf{Thesis (current).} We reproduce a published source-level
+vulnerability-detection result and test how far it degrades when the same
+programs are presented as decompiled binaries, isolating the effect of compiler
+optimization (\texttt{-O0} vs.\ \texttt{-O3}) from the effect of symbol stripping
+(kept vs.\ stripped), in order to mark the point at which automated triage is no
+longer reliable and manual Ghidra/GDB analysis becomes mandatory.
+
+\section{Reproduction target and baseline}
+We reproduce a specific result from Khare et al.~\cite{khare2024}, who evaluated
+16 LLMs on five vulnerability datasets. We adopt their \emph{Juliet C/C++}
+setting and their exact prompts (system prompt, Basic, and CWE-specific) at
+temperature~0. The claim we reproduce is their reported Juliet C/C++ detection
+performance, summarized in Table~\ref{tab:baseline}. Their best model on this
+dataset (Qwen-2.5-14B, CWE-specific prompt) reaches accuracy~0.65 and F1~0.72,
+while the CodeQL static baseline reaches accuracy~0.72 but recall only~0.44.
+A notable pattern is that most models achieve high recall ($\sim$0.9--1.0) with
+precision near~0.5: they call almost everything vulnerable. Our fixed-version
+programs are designed to expose exactly this bias and to track whether it worsens
+on binaries.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{llcccc}
+\toprule
+Source (Juliet C/C++) & Method & Acc & Prec & Rec & F1 \\
+\midrule
+Khare et al.~\cite{khare2024} & CodeQL (static) & 0.72 & 0.99 & 0.44 & 0.61 \\
+Khare et al.~\cite{khare2024} & Qwen-2.5-14B (CWE) & 0.65 & 0.60 & 0.89 & 0.72 \\
+Khare et al.~\cite{khare2024} & GPT-4 (CWE) & 0.58 & 0.54 & 0.95 & 0.69 \\
+\midrule
+This work (reproduction) & \placeholder{model} source & \placeholder{acc} & \placeholder{prec} & \placeholder{rec} & \placeholder{f1} \\
+\bottomrule
+\end{tabular}
+\caption{Published Juliet C/C++ numbers we reproduce, and our source-level
+reproduction row (to be filled from \texttt{results/summary.json}).}
+\label{tab:baseline}
+\end{table}
+
+\section{What is implemented}
+The full pipeline runs end to end; only the model inference step requires the
+local GPU and is run on the author's machine (Ollama, \placeholder{model},
+temperature~0). The stages are:
+\begin{itemize}
+\item \textbf{Targets.} Eight C programs, each with a vulnerable and a fixed
+variant (16 source cases), covering buffer overflow (CWE-121/787), format string
+(CWE-134), and use-after-free / double-free (CWE-416/415). Juliet-style
+identifiers are renamed to neutral names so the model cannot read the answer from
+a symbol like \texttt{CWE121\_..\_bad}.
+\item \textbf{Build matrix.} \texttt{compile.sh} produces the $2\times2$ builds per
+variant. Stripping is applied to a \emph{copy} of the compiled binary
+(\texttt{strip --strip-all}), not via recompilation, so the machine code is
+byte-identical to its symbol-bearing twin. \texttt{\_FORTIFY\_SOURCE} and the
+stack protector are disabled so \texttt{-O3} does not replace \texttt{strcpy}
+with \texttt{\_\_strcpy\_chk} or insert canaries, which would change the bug
+rather than merely optimize around it.
+\item \textbf{Build verification.} \texttt{verify\_builds.sh} confirms (1) each
+stripped binary has a \texttt{.text} section byte-identical to its kept twin, so
+symbols are the only difference, and (2) every vulnerable binary still contains
+its bug after compilation --- memory bugs confirmed by AddressSanitizer, format
+strings confirmed by a crash under a format-specifier payload --- at both
+\texttt{-O0} and \texttt{-O3}. All 16 vulnerable builds are confirmed.
+\item \textbf{Decompilation.} \texttt{decompile.sh} exports Ghidra headless
+pseudo-C per binary (\texttt{objdump -d} \texttt{.text} fallback when Ghidra is
+absent), plus a comment-stripped source corpus for the reproduction condition.
+\item \textbf{Inference + scoring.} \texttt{run\_pipeline.py} applies the Khare
+prompts and logs a structured verdict per item; \texttt{score.py} computes
+accuracy, precision, recall, F1, CWE-match, and hallucination per condition, and
+the factor-isolation deltas.
+\end{itemize}
+
+\section{Evaluation design and the development/evaluation split}
+The detection task is binary (vulnerable vs.\ not), scored against the known
+label of each variant. Measures: accuracy, precision, recall, and F1 for
+detection; \emph{CWE-match} (of correctly flagged vulnerable cases, the fraction
+assigned the right CWE); and \emph{hallucination} (fraction of fixed programs
+flagged vulnerable). The five conditions are \texttt{source}, and the four binary
+builds \texttt{O0/kept}, \texttt{O0/stripped}, \texttt{O3/kept},
+\texttt{O3/stripped}. Because the project reproduces and diagnoses rather than
+trains, the ``split'' is a prompt-development vs.\ evaluation split: prompts and
+parsing were fixed on two held-out programs (one overflow, one use-after-free)
+and never changed based on the remaining evaluation targets. Factor isolation
+compares conditions that differ in exactly one variable: \texttt{O0/kept} vs.\
+\texttt{O3/kept} isolates optimization; \texttt{O0/kept} vs.\ \texttt{O0/stripped}
+isolates stripping.
+
+\section{Preliminary results and interpretation}
+\emph{The pipeline, baseline reproduction, and verification are complete; the
+numbers below are filled from \texttt{results/summary.json} after the model run.}
+Table~\ref{tab:results} reports detection and triage metrics per condition.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lcccccc}
+\toprule
+Condition & Acc & Prec & Rec & F1 & CWE-match & Halluc. \\
+\midrule
+source       & \placeholder{} & \placeholder{} & \placeholder{} & \placeholder{} & \placeholder{} & \placeholder{} \\
+O0 / kept     & \placeholder{} & \placeholder{} & \placeholder{} & \placeholder{} & \placeholder{} & \placeholder{} \\
+O0 / stripped & \placeholder{} & \placeholder{} & \placeholder{} & \placeholder{} & \placeholder{} & \placeholder{} \\
+O3 / kept     & \placeholder{} & \placeholder{} & \placeholder{} & \placeholder{} & \placeholder{} & \placeholder{} \\
+O3 / stripped & \placeholder{} & \placeholder{} & \placeholder{} & \placeholder{} & \placeholder{} & \placeholder{} \\
+\bottomrule
+\end{tabular}
+\caption{Detection and triage metrics per condition (16 cases each).}
+\label{tab:results}
+\end{table}
+
+\textbf{Expected reading (hypothesis, to confirm).} We expect F1 and CWE-match to
+be highest on \texttt{source}, to fall most under stripping (loss of function and
+variable names), and to fall further under \texttt{-O3} (inlining and
+restructuring). The factor-isolation deltas will say which of the two matters
+more and whether they compound: if the \texttt{O0/kept}$\to$\texttt{O3/stripped}
+drop exceeds the sum of the two single-factor drops, the factors interact, which
+would itself be a reportable finding. A \emph{negative} result --- little change
+across conditions --- would contradict the thesis and would be reported as such.
+
+\section{What will be studied next (the distribution shift)}
+The stress condition is the structural distribution shift from source to
+\texttt{-O3}-stripped binary: identical semantics, radically different surface
+form. The remaining work is: (1) run \texttt{cwe\_checker} on all four binary
+builds as the non-LLM binary baseline; (2) define the triage decision rule
+concretely --- an alert is trusted only above a recall threshold with LLM and
+\texttt{cwe\_checker} agreement, else it is routed to manual Ghidra/GDB --- and
+report how often each condition would be routed to manual analysis; (3) a short
+qualitative failure analysis mapping specific compiler transformations (inlining,
+\texttt{strcpy} vectorization, dead-store elimination) to specific triage errors.
+
+\section{Completion plan}
+\begin{itemize}
+\item \textbf{By Fri (milestone):} pipeline + baseline reproduction + verification
+done (complete); source and binary runs logged; Table~\ref{tab:results} filled.
+\item \textbf{Final report:} add \texttt{cwe\_checker} baseline; triage decision
+rule and routing rates; failure analysis; expand targets if time allows.
+\item \textbf{Risks:} a bug optimized away at \texttt{-O3} (mitigated by the ASan
+survival check, all 16 currently pass); Ghidra headless setup (mitigated by the
+\texttt{objdump} fallback, already working).
+\end{itemize}
+
+\section*{Class-survey entry}
+This project studies binary vulnerability triage: deciding, without source code,
+whether a compiled program contains a memory-safety or format-string bug. It
+tests whether Khare et al.'s source-level LLM detection results on Juliet C/C++
+hold when the model sees only decompiled binaries that are optimized and/or
+stripped. The method is a $2\times2$ design (\texttt{-O0}/\texttt{-O3} $\times$
+symbols kept/stripped) that scores the same LLM and prompts against the
+source-level baseline, with \texttt{cwe\_checker} planned as a non-LLM binary
+baseline. The goal is to diagnose where automated triage stops being reliable
+and manual Ghidra/GDB analysis becomes necessary.
+
+\begin{center}\small
+\begin{tabular}{@{}p{1.6cm}p{2.0cm}p{2.2cm}p{2.6cm}p{1.6cm}p{1.6cm}@{}}
+\toprule
+Domain & Task & Baseline & Distribution shift studied & Primary metric & Finding so far \\
+\midrule
+Binary vuln.\ triage & Bug detection + CWE ID (Juliet C/C++) & Khare et al.\ source-level LLM (Qwen-2.5-14B) &
+Source $\to$ decompiled binary: \texttt{-O0}/\texttt{-O3} $\times$ kept/stripped & F1 (plus CWE match) & Pending model run \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section*{Contributions}
+Solo project. Los Escalante: target curation, build and verification scripts,
+decompilation pipeline, prompt pipeline and scorer, reproduction of the Khare
+et al.\ baseline, and this report.
+
+\section*{Artifacts}
+Code and data: \placeholder{repo or drive link}. Scripts: \texttt{compile.sh},
+\texttt{verify\_builds.sh}, \texttt{decompile.sh}, \texttt{run\_pipeline.py},
+\texttt{score.py}.
+
+\begin{thebibliography}{9}
+\bibitem{khare2024} A.~Khare, S.~Dutta, Z.~Li, A.~Solko-Breslin, R.~Alur, M.~Naik.
+``Understanding the Effectiveness of Large Language Models in Detecting Security
+Vulnerabilities.'' arXiv:2311.16169, 2024 (ICST 2025).
+\bibitem{juliet} T.~Boland, P.~E.~Black. ``Juliet 1.1 C/C++ and Java Test Suite.''
+\textit{IEEE Computer}, 2012. NIST SAMATE SARD.
+\bibitem{cwechecker} Fraunhofer FKIE. ``cwe\_checker.''
+\url{https://github.com/fkie-cad/cwe_checker}.
+\end{thebibliography}
+
+\end{document}

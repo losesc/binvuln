@@ -1,0 +1,36 @@
+% neuripslike.sty — a self-contained NeurIPS-style layout for the milestone.
+% Matches the NeurIPS look (single column, 10pt, centered title block, small-caps
+% section heads, the signature title rule) without the official restricted .sty,
+% which the sandbox could not download. Swap in neurips_2024.sty before final
+% submission if your class requires the exact file.
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{neuripslike}[2026/10/28 neurips-like milestone style]
+\RequirePackage{geometry}
+\geometry{letterpaper, top=1in, bottom=1in, left=1.5in, right=1.5in}
+\RequirePackage{times}
+\RequirePackage{titlesec}
+\RequirePackage{titling}
+\RequirePackage{xcolor}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.5em}
+\renewcommand{\baselinestretch}{0.99}
+
+% section headings: bold, slightly larger, numbered
+\titleformat{\section}{\bfseries\large}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\bfseries\normalsize}{\thesubsection}{0.5em}{}
+\titlespacing{\section}{0pt}{1.1em}{0.4em}
+\titlespacing{\subsection}{0pt}{0.8em}{0.3em}
+
+% NeurIPS-like title block with the horizontal rule under the title
+\renewcommand{\maketitle}{%
+  \begin{center}
+    {\LARGE\bfseries \@title\par}
+    \vskip 0.4em
+    {\normalsize \@author\par}
+  \end{center}
+  \vskip 0.3em
+  \hrule height 0.5pt
+  \vskip 1.0em
+}
+\endinput

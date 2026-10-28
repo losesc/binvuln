@@ -1,0 +1,9 @@
+program,cwe,cwe_name,class
+t01_stack_overflow,CWE-121,Stack-based Buffer Overflow,buffer_overflow
+t02_memcpy_overflow,CWE-787,Out-of-bounds Write,buffer_overflow
+t03_offbyone,CWE-787,Out-of-bounds Write (off-by-one),buffer_overflow
+t04_format_string,CWE-134,Uncontrolled Format String,format_string
+t05_format_syslog,CWE-134,Uncontrolled Format String,format_string
+t06_use_after_free,CWE-416,Use After Free,use_after_free
+t07_double_free,CWE-415,Double Free,use_after_free
+t08_uaf_reuse,CWE-416,Use After Free,use_after_free
